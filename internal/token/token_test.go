@@ -12,7 +12,7 @@ import (
 const secret = "segredo-de-teste"
 
 func TestIssue(t *testing.T) {
-	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	now := time.Now()
 	issuer := token.NewIssuer(secret, 15*time.Minute)
 
 	subject := token.Subject{
@@ -59,7 +59,7 @@ func TestIssue(t *testing.T) {
 func TestIssue_RejectedByWrongSecret(t *testing.T) {
 	issuer := token.NewIssuer(secret, time.Minute)
 
-	signed, _, err := issuer.Issue(token.Subject{ID: "req-1"}, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC))
+	signed, _, err := issuer.Issue(token.Subject{ID: "req-1"}, time.Now())
 	if err != nil {
 		t.Fatalf("esperava sucesso, veio %v", err)
 	}
