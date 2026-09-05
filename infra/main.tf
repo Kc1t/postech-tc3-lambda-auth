@@ -30,19 +30,26 @@ resource "aws_security_group" "lambda" {
   tags = local.tags
 }
 
-resource "aws_cloudwatch_log_group" "lambda" {
-  name              = "/aws/lambda/${local.name}"
+resource "aws_cloudwatch_log_group" "issuer" {
+  name              = "/aws/lambda/${local.name}-issuer"
   retention_in_days = var.log_retention_days
 
   tags = local.tags
 }
 
-resource "aws_lambda_function" "auth" {
-  function_name = local.name
+resource "aws_cloudwatch_log_group" "authorizer" {
+  name              = "/aws/lambda/${local.name}-authorizer"
+  retention_in_days = var.log_retention_days
+
+  tags = local.tags
+}
+
+resource "aws_lambda_function" "issuer" {
+  function_name = "${local.name}-issuer"
   role          = data.aws_iam_role.lab.arn
 
-  filename         = var.artifact_path
-  source_code_hash = filebase64sha256(var.artifact_path)
+  filename         = var.issuer_artifact_path
+  source_code_hash = filebase64sha256(var.issuer_artifact_path)
 
   runtime       = "provided.al2023"
   handler       = "bootstrap"
@@ -63,7 +70,31 @@ resource "aws_lambda_function" "auth" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda]
+  depends_on = [aws_cloudwatch_log_group.issuer]
+
+  tags = local.tags
+}
+
+resource "aws_lambda_function" "authorizer" {
+  function_name = "${local.name}-authorizer"
+  role          = data.aws_iam_role.lab.arn
+
+  filename         = var.authorizer_artifact_path
+  source_code_hash = filebase64sha256(var.authorizer_artifact_path)
+
+  runtime       = "provided.al2023"
+  handler       = "bootstrap"
+  architectures = ["arm64"]
+  timeout       = 5
+  memory_size   = 128
+
+  environment {
+    variables = {
+      JWT_SECRET = var.jwt_secret
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.authorizer]
 
   tags = local.tags
 }

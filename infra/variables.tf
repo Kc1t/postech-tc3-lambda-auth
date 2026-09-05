@@ -31,9 +31,14 @@ variable "jwt_ttl" {
   default = "15m"
 }
 
-variable "artifact_path" {
+variable "issuer_artifact_path" {
   type    = string
-  default = "../function.zip"
+  default = "../issuer.zip"
+}
+
+variable "authorizer_artifact_path" {
+  type    = string
+  default = "../authorizer.zip"
 }
 
 variable "log_retention_days" {

@@ -100,10 +100,15 @@ jobs:
           TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
         run: terraform apply -auto-approve -var-file=envs/${TF_ENV}.tfvars
 
-      - name: Publicar o invoke ARN
+      - name: Publicar os invoke ARNs
         working-directory: infra
         run: |
-          echo "### Lambda de autenticacao" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          terraform output -raw invoke_arn >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Ligar no postech-tc3-infra-k8s"
+            echo '```hcl'
+            echo "lambda_issuer_invoke_arn     = \"$(terraform output -raw issuer_invoke_arn)\""
+            echo "lambda_authorizer_invoke_arn = \"$(terraform output -raw authorizer_invoke_arn)\""
+            echo "lambda_issuer_function_name     = \"$(terraform output -raw issuer_function_name)\""
+            echo "lambda_authorizer_function_name = \"$(terraform output -raw authorizer_function_name)\""
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

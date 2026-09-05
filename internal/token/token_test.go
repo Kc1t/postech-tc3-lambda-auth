@@ -68,3 +68,78 @@ func TestIssue_RejectedByWrongSecret(t *testing.T) {
 		t.Error("esperava falha de assinatura com segredo diferente")
 	}
 }
+
+func TestVerify(t *testing.T) {
+	now := time.Now()
+	issuer := token.NewIssuer(secret, 15*time.Minute)
+
+	subject := token.Subject{ID: "req-1", Name: "João", Email: "j@j.com", Document: "52998224725"}
+	signed, _, err := issuer.Issue(subject, now)
+	if err != nil {
+		t.Fatalf("esperava sucesso, veio %v", err)
+	}
+
+	claims, err := issuer.Verify(signed)
+	if err != nil {
+		t.Fatalf("esperava token valido, veio %v", err)
+	}
+
+	if claims.Subject != "req-1" || claims.Role != "client" || claims.Document != "52998224725" {
+		t.Errorf("claims inesperadas: %+v", claims)
+	}
+}
+
+func TestVerify_Rejects(t *testing.T) {
+	now := time.Now()
+	issuer := token.NewIssuer(secret, 15*time.Minute)
+
+	signed, _, err := issuer.Issue(token.Subject{ID: "req-1"}, now)
+	if err != nil {
+		t.Fatalf("esperava sucesso, veio %v", err)
+	}
+
+	cases := map[string]struct {
+		issuer *token.Issuer
+		token  string
+	}{
+		"segredo diferente": {token.NewIssuer("outro-segredo", time.Minute), signed},
+		"token vazio":       {issuer, ""},
+		"token corrompido":  {issuer, signed + "x"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := tc.issuer.Verify(tc.token); err == nil {
+				t.Error("esperava erro, veio nil")
+			}
+		})
+	}
+}
+
+func TestVerify_RejectsExpired(t *testing.T) {
+	issuer := token.NewIssuer(secret, time.Minute)
+
+	signed, _, err := issuer.Issue(token.Subject{ID: "req-1"}, time.Now().Add(-2*time.Hour))
+	if err != nil {
+		t.Fatalf("esperava sucesso, veio %v", err)
+	}
+
+	if _, err := issuer.Verify(signed); err == nil {
+		t.Error("esperava rejeicao de token expirado")
+	}
+}
+
+func TestVerify_RejectsNoneAlgorithm(t *testing.T) {
+	unsigned, err := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
+		"sub":  "req-1",
+		"role": "client",
+		"exp":  time.Now().Add(time.Hour).Unix(),
+	}).SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatalf("falha ao montar token sem assinatura: %v", err)
+	}
+
+	if _, err := token.NewIssuer(secret, time.Minute).Verify(unsigned); err == nil {
+		t.Error("esperava rejeicao do algoritmo none")
+	}
+}
