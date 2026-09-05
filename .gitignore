@@ -1,3 +1,10 @@
 bin/
 *.zip
 .env
+
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!infra/envs/*.tfvars
+crash.log

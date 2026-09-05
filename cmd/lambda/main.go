@@ -14,7 +14,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/Kc1t/postech-tc3-lambda-auth/internal/cpf"
-	"github.com/Kc1t/postech-tc3-lambda-auth/internal/customer"
+	"github.com/Kc1t/postech-tc3-lambda-auth/internal/requester"
 	"github.com/Kc1t/postech-tc3-lambda-auth/internal/token"
 )
 
@@ -29,9 +29,9 @@ type response struct {
 }
 
 type handler struct {
-	customers *customer.Repository
-	issuer    *token.Issuer
-	logger    *slog.Logger
+	requesters *requester.Repository
+	issuer     *token.Issuer
+	logger     *slog.Logger
 }
 
 func main() {
@@ -50,19 +50,20 @@ func main() {
 	}
 
 	h := &handler{
-		customers: customer.NewRepository(db),
-		issuer:    token.NewIssuer(os.Getenv("JWT_SECRET"), ttl),
-		logger:    logger,
+		requesters: requester.NewRepository(db),
+		issuer:     token.NewIssuer(os.Getenv("JWT_SECRET"), ttl),
+		logger:     logger,
 	}
 
 	lambda.Start(h.handle)
 }
 
 func (h *handler) handle(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	logger := h.logger.With("request_id", event.RequestContext.RequestID)
+	logger := h.logger.With("correlation_id", correlationID(event))
 
 	var body request
 	if err := json.Unmarshal([]byte(event.Body), &body); err != nil {
+		logger.Warn("payload invalido")
 		return reply(400, map[string]string{"error": "payload invalido"})
 	}
 
@@ -72,32 +73,47 @@ func (h *handler) handle(ctx context.Context, event events.APIGatewayV2HTTPReque
 		return reply(400, map[string]string{"error": err.Error()})
 	}
 
-	found, err := h.customers.FindByDocument(ctx, document)
+	found, err := h.requesters.FindByDocument(ctx, document)
 	switch {
-	case errors.Is(err, customer.ErrNotFound):
+	case errors.Is(err, requester.ErrNotFound):
 		logger.Warn("cliente nao encontrado")
 		return reply(404, map[string]string{"error": err.Error()})
-	case errors.Is(err, customer.ErrInactive):
-		logger.Warn("cliente inativo", "customer_id", found.ID)
+	case errors.Is(err, requester.ErrInactive):
+		logger.Warn("cliente inativo", "requester_id", found.ID, "status", found.Status)
 		return reply(403, map[string]string{"error": err.Error()})
 	case err != nil:
 		logger.Error("falha ao consultar cliente", "error", err)
 		return reply(500, map[string]string{"error": "erro interno"})
 	}
 
-	signed, expiresAt, err := h.issuer.Issue(found.ID, document, found.Name, found.Role, time.Now())
+	subject := token.Subject{
+		ID:       found.ID,
+		Name:     found.Name,
+		Email:    found.Email,
+		Document: document,
+	}
+
+	signed, expiresAt, err := h.issuer.Issue(subject, time.Now())
 	if err != nil {
 		logger.Error("falha ao assinar token", "error", err)
 		return reply(500, map[string]string{"error": "erro interno"})
 	}
 
-	logger.Info("token emitido", "customer_id", found.ID)
+	logger.Info("token emitido", "requester_id", found.ID)
 
 	return reply(200, response{
 		AccessToken: signed,
 		TokenType:   "Bearer",
 		ExpiresAt:   expiresAt.Format(time.RFC3339),
 	})
+}
+
+func correlationID(event events.APIGatewayV2HTTPRequest) string {
+	if id := event.Headers["x-correlation-id"]; id != "" {
+		return id
+	}
+
+	return event.RequestContext.RequestID
 }
 
 func reply(status int, payload any) (events.APIGatewayV2HTTPResponse, error) {

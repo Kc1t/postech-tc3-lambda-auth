@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
 
+env:
+  TF_VERSION: 1.9.8
 
 jobs:
   test:
@@ -21,11 +23,37 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - run: go mod tidy
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - run: gofmt -l ./cmd ./internal | tee /tmp/fmt && test ! -s /tmp/fmt
 
       - run: go vet ./...
 
       - run: go test ./... -race -cover
+
+  plan:
+    name: Terraform Plan
+    needs: test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - run: terraform fmt -check -recursive
+
+      - run: terraform init -backend=false
+
+      - run: terraform validate
 
   deploy:
     name: Deploy
@@ -40,9 +68,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - run: go mod tidy
-
-      - run: make package
+      - name: Empacotar a function
+        run: make package
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -51,9 +78,32 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Update function code
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Resolver ambiente
+        run: echo "TF_ENV=${{ github.ref_name == 'main' && 'prod' || 'staging' }}" >> $GITHUB_ENV
+
+      - name: Terraform init
+        working-directory: infra
         run: |
-          aws lambda update-function-code \
-            --function-name postech-tc3-${{ github.ref_name == 'main' && 'prod' || 'staging' }}-auth \
-            --zip-file fileb://function.zip \
-            --publish
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=lambda-auth/${TF_ENV}.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}"
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          TF_VAR_database_url: ${{ secrets.POSTGRES_DSN }}
+          TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
+        run: terraform apply -auto-approve -var-file=envs/${TF_ENV}.tfvars
+
+      - name: Publicar o invoke ARN
+        working-directory: infra
+        run: |
+          echo "### Lambda de autenticacao" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform output -raw invoke_arn >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
