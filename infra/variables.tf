@@ -50,3 +50,9 @@ variable "lab_role_name" {
   type    = string
   default = "LabRole"
 }
+
+variable "subnet_az_ids" {
+  type        = list(string)
+  default     = ["use1-az1", "use1-az2", "use1-az4", "use1-az5", "use1-az6"]
+  description = "AZs das subnets da function; use1-az3 fica de fora, como no cluster"
+}
