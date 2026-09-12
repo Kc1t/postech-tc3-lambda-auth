@@ -14,7 +14,7 @@ Recebe um CPF, valida o número, consulta a existência e o status do cliente no
 - `golang-jwt/v5` para emissão do token
 - `lib/pq` para acesso ao PostgreSQL gerenciado
 - Logs estruturados em JSON via `log/slog`
-- CI/CD: GitHub Actions com OIDC
+- CI/CD: GitHub Actions com a credencial de sessão do AWS Academy Learner Lab
 
 ## Arquitetura
 
@@ -96,7 +96,8 @@ O exigir `sub` **e** `role` não é arbitrário: é o mesmo contrato do middlewa
 ## Estrutura
 
 ```
-cmd/lambda/main.go        entrypoint, orquestra validação → consulta → token
+cmd/issuer/main.go        emissor: valida o CPF, consulta o cliente e devolve o JWT
+cmd/authorizer/main.go    authorizer REQUEST do API Gateway: valida o JWT
 internal/cpf/             validação de CPF (dígitos verificadores)
 internal/requester/       consulta em `requesters` e checagem de status
 internal/token/           emissão do JWT
@@ -156,7 +157,7 @@ make package    # gera function.zip
 | Evento | Ação |
 |---|---|
 | Pull Request | tidy, `gofmt`, `go vet`, testes com race e cobertura, `terraform validate` |
-| Push em `homolog` | `make package` + `terraform apply` em staging |
+| Push em `homolog` | os mesmos testes do PR; sem deploy, porque as functions atendem o gateway único de produção (ADR-0010) |
 | Push em `main` | `make package` + `terraform apply` em produção |
 
 O Terraform é dono do código da function: o `source_code_hash` do `function.zip` dispara a atualização no `apply`, sem passo separado de `update-function-code`.
@@ -198,7 +199,14 @@ Após o primeiro apply, leve o output `invoke_arn` para a variável `lambda_auth
 
 `cmd/issuer` e `cmd/authorizer` ficam sem teste de propósito: são finos, apenas orquestram os pacotes acima e traduzem para o formato de evento da Lambda.
 
-## Pendências
+## Deploy ativo
 
-- `vpc_id` está com placeholder em `infra/envs/*.tfvars`.
-- Nenhum `apply` foi executado ainda — depende da conta do Learner Lab.
+| O quê | Onde |
+|---|---|
+| Emissão de token | `POST https://tkh5cum8g8.execute-api.us-east-1.amazonaws.com/auth` com `{"cpf": "..."}` |
+| Functions (us-east-1) | `postech-tc3-prod-auth-issuer` e `postech-tc3-prod-auth-authorizer` |
+| Logs | CloudWatch: `/aws/lambda/postech-tc3-prod-auth-issuer` e `/aws/lambda/postech-tc3-prod-auth-authorizer` |
+| APIs protegidas (Swagger) | https://tkh5cum8g8.execute-api.us-east-1.amazonaws.com/swagger/index.html |
+| Collection Postman | [`postman_collection.json`](https://github.com/Kc1t/postech-tc3-app/blob/main/postman_collection.json) no repositório da aplicação |
+
+As functions de produção foram criadas na primeira validação no Learner Lab e importadas para o state do Terraform (`terraform import`, chave `lambda-auth/prod.tfstate`). Desde então quem as altera é o pipeline, no push da `main`.

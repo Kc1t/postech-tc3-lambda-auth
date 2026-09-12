@@ -61,10 +61,11 @@ jobs:
 
       - run: terraform validate
 
+  # Deploy so na main: as functions atendem o gateway unico de producao (ADR-0010).
   deploy:
     name: Deploy
     needs: test
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
     steps:
