@@ -100,8 +100,8 @@ cmd/issuer/main.go        emissor: valida o CPF, consulta o cliente e devolve o 
 cmd/authorizer/main.go    authorizer REQUEST do API Gateway: valida o JWT
 internal/cpf/             validação de CPF (dígitos verificadores)
 internal/requester/       consulta em `requesters` e checagem de status
-internal/token/           emissão do JWT
-infra/                    Terraform da function (role, VPC, log group, código)
+internal/token/           emissão e verificação do JWT
+infra/                    Terraform das functions (lookup da LabRole, VPC, security group, log groups, código)
 ```
 
 ## Contrato do token
@@ -128,7 +128,7 @@ Assinatura HS256 com o **mesmo** `JWT_SECRET` da aplicação. Se os segredos div
 | Cliente inativo | 403 | `cliente inativo` |
 | Falha interna | 500 | `erro interno` |
 
-O `x-correlation-id` do request é propagado para os logs; na ausência dele, usa o request id do API Gateway.
+O emissor propaga o `x-correlation-id` do request para os logs; na ausência dele, usa o request id do API Gateway. O authorizer registra o request id.
 
 ## Execução local
 
@@ -141,14 +141,16 @@ make test
 Empacotar o artefato de deploy:
 
 ```bash
-make package    # gera function.zip
+make package    # gera issuer.zip e authorizer.zip (bootstrap arm64)
 ```
+
+> **Dockerfile:** não se aplica. As functions rodam no runtime `provided.al2023` e sobem como zip, não como imagem de container.
 
 ## Variáveis de ambiente
 
 | Variável | Descrição |
 |---|---|
-| `DATABASE_URL` | string de conexão do RDS (vinda do Secrets Manager) |
+| `DATABASE_URL` | string de conexão do RDS (GitHub Secret `POSTGRES_DSN`, repassado pelo Terraform) |
 | `JWT_SECRET` | segredo de assinatura HS256 |
 | `JWT_TTL` | validade do token (padrão `15m`) |
 
@@ -157,10 +159,12 @@ make package    # gera function.zip
 | Evento | Ação |
 |---|---|
 | Pull Request | tidy, `gofmt`, `go vet`, testes com race e cobertura, `terraform validate` |
-| Push em `homolog` | os mesmos testes do PR; sem deploy, porque as functions atendem o gateway único de produção (ADR-0010) |
-| Push em `main` | `make package` + `terraform apply` em produção |
+| Push em `homolog` | os mesmos testes + `make package` + `terraform apply` com `envs/staging.tfvars`: functions `postech-tc3-staging-auth-*`, state `lambda-auth/staging.tfstate`, sem tocar em produção |
+| Push em `main` | os mesmos testes + `make package` + `terraform apply` em produção |
 
-O Terraform é dono do código da function: o `source_code_hash` do `function.zip` dispara a atualização no `apply`, sem passo separado de `update-function-code`.
+O Terraform é dono do código das functions: o `source_code_hash` de `issuer.zip` e `authorizer.zip` dispara a atualização no `apply`, sem passo separado de `update-function-code`.
+
+Staging é barato porque a Lambda cobra por invocação; o cluster e o banco, que cobram por hora, ficam compartilhados ([ADR-0010](https://github.com/Kc1t/postech-tc3-app/blob/main/docs/adr/0010-cluster-unico-dois-namespaces.md)). As functions de staging não têm rota no gateway, que é único e aponta para as de produção — são testadas por invocação direta (`aws lambda invoke`).
 
 Secrets necessários: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `TF_STATE_BUCKET`, `POSTGRES_DSN`, `JWT_SECRET`.
 
@@ -205,8 +209,9 @@ Após o primeiro apply, leve o output `invoke_arn` para a variável `lambda_auth
 |---|---|
 | Emissão de token | `POST https://tkh5cum8g8.execute-api.us-east-1.amazonaws.com/auth` com `{"cpf": "..."}` |
 | Functions (us-east-1) | `postech-tc3-prod-auth-issuer` e `postech-tc3-prod-auth-authorizer` |
+| Functions de homologação | `postech-tc3-staging-auth-issuer` e `postech-tc3-staging-auth-authorizer`, criadas pelo push em `homolog` |
 | Logs | CloudWatch: `/aws/lambda/postech-tc3-prod-auth-issuer` e `/aws/lambda/postech-tc3-prod-auth-authorizer` |
 | APIs protegidas (Swagger) | https://tkh5cum8g8.execute-api.us-east-1.amazonaws.com/swagger/index.html |
 | Collection Postman | [`postman_collection.json`](https://github.com/Kc1t/postech-tc3-app/blob/main/postman_collection.json) no repositório da aplicação |
 
-As functions de produção foram criadas na primeira validação no Learner Lab e importadas para o state do Terraform (`terraform import`, chave `lambda-auth/prod.tfstate`). Desde então quem as altera é o pipeline, no push da `main`.
+As functions de produção foram criadas na primeira validação no Learner Lab e importadas para o state do Terraform (`terraform import`, chave `lambda-auth/prod.tfstate`). Desde então quem as altera é o pipeline, no push da `main`; as de staging nascem e são atualizadas no push da `homolog`.
