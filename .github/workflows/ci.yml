@@ -61,11 +61,12 @@ jobs:
 
       - run: terraform validate
 
-  # Deploy so na main: as functions atendem o gateway unico de producao (ADR-0010).
+  # Deploy nas duas branches: homolog aplica envs/staging.tfvars (functions postech-tc3-staging-auth-*,
+  # state proprio) e main aplica producao. A Lambda cobra por invocacao, entao staging nao pesa (ADR-0010).
   deploy:
     name: Deploy
     needs: test
-    if: github.event_name == 'push' && github.ref_name == 'main'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'prod' || 'staging' }}
     steps:
